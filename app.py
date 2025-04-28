@@ -1,7 +1,7 @@
 import os
-import time
 import subprocess
-from datetime import datetime, timezone
+import json
+from datetime import datetime
 from flask import Flask, render_template, request, flash
 
 app = Flask(__name__)
@@ -13,55 +13,89 @@ CLUSTER_NAME   = "new-cluster2"
 REGION         = "us-central1"
 PYSPARK_SCRIPT = "gs://input-bucket-ecc/scripts/image_processing_v2.py"
 
-# Predefined datasets mapping label to GCS prefix
-# Dropdown datasets
 DATASETS = {
-    'Small':   'gs://input-bucket-ecc/caltech101/small/',
+    'Small':  'gs://input-bucket-ecc/caltech101/small/',
     'Medium': 'gs://input-bucket-ecc/caltech101/medium/',
-    'Large':  'gs://input-bucket-ecc/caltech101/large/'
+    'Large':  'gs://input-bucket-ecc/caltech101/large/',
 }
 
-SPARK_UI_URL = "https://yycdgp44eveqfnyucsovqssriq-dot-us-central1.dataproc.googleusercontent.com/sparkhistory/"
+SPARK_UI_URL = (
+    "https://yycdgp44eveqfnyucsovqssriq-"
+    "dot-us-central1.dataproc.googleusercontent.com/sparkhistory/"
+)
 # ────────────────────────────────────────────────────────────────────────────────
 
 def submit_and_wait(gcloud_flags=None, script_args=None):
     """
-    Submits a Dataproc Spark job, waits for it to finish, and returns
-    (elapsed_seconds, logs) or (None, error_logs).
+    1) Submit the PySpark job, get jobId
+    2) Wait for it to finish
+    3) Describe the job JSON to extract:
+         - when it entered RUNNING (stateStartTime)
+         - when it entered DONE   (status.stateStartTime)
+    Returns (elapsed_seconds, logs) or (None, error_logs)
     """
     gcloud_flags = gcloud_flags or []
-    script_args = script_args or []
+    script_args  = script_args  or []
 
-    # Build the command:
-    # 1) gcloud flags
-    # 2) -- to separate script args
+    # 1) submit & capture jobId
     submit_cmd = [
-        "gcloud.cmd", "dataproc", "jobs", "submit", "pyspark", PYSPARK_SCRIPT,
+        "gcloud.cmd", "dataproc", "jobs", "submit", "pyspark",
+        PYSPARK_SCRIPT,
         f"--cluster={CLUSTER_NAME}",
         f"--region={REGION}",
         f"--project={PROJECT_ID}",
-        "--format=value(reference.jobId)"
-    ] + gcloud_flags + [
-        "--"
-    ] + script_args
+        "--format=value(reference.jobId)",
+    ] + gcloud_flags + ["--"] + script_args
 
-    # 1) Submit, capture jobId
     sub = subprocess.run(submit_cmd, capture_output=True, text=True)
     if sub.returncode != 0:
-        return None, sub.stderr
+        return None, sub.stderr.strip()
     job_id = sub.stdout.strip()
 
-    # 2) Wait for the job to finish
-    start = time.time()
+    # 2) wait for completion
     wait_cmd = [
         "gcloud.cmd", "dataproc", "jobs", "wait", job_id,
         f"--region={REGION}",
-        f"--project={PROJECT_ID}"
+        f"--project={PROJECT_ID}",
     ]
     wait = subprocess.run(wait_cmd, capture_output=True, text=True)
-    elapsed = time.time() - start
+    if wait.returncode != 0:
+        return None, wait.stderr.strip()
 
-    return elapsed, (wait.stdout or wait.stderr)
+    # 3) describe to get JSON
+    desc_cmd = [
+        "gcloud.cmd", "dataproc", "jobs", "describe", job_id,
+        f"--region={REGION}",
+        f"--project={PROJECT_ID}",
+        "--format=json"
+    ]
+    desc = subprocess.run(desc_cmd, capture_output=True, text=True)
+    if desc.returncode != 0:
+        return None, desc.stderr.strip()
+
+    info = json.loads(desc.stdout)
+    status = info.get("status", {})
+    history = info.get("statusHistory", [])
+
+    # completion time = when status.stateStartTime for the final state (typically DONE)
+    completion_ts = status.get("stateStartTime")
+
+    # start time = when it entered RUNNING in history
+    start_ts = None
+    for rec in history:
+        if rec.get("state") == "RUNNING":
+            start_ts = rec.get("stateStartTime")
+            break
+
+    if not start_ts or not completion_ts:
+        return None, "Could not parse start/completion timestamps"
+
+    # parse and compute elapsed
+    dt_start = datetime.fromisoformat(start_ts.replace("Z", "+00:00"))
+    dt_end   = datetime.fromisoformat(completion_ts.replace("Z", "+00:00"))
+    elapsed_seconds = (dt_end - dt_start).total_seconds()
+
+    return elapsed_seconds, wait.stdout.strip()
 
 
 @app.route("/", methods=["GET", "POST"])
@@ -69,40 +103,30 @@ def index():
     metrics = None
 
     if request.method == "POST":
-        # 1) Which dataset?
         label     = request.form["dataset"]
         in_prefix = DATASETS[label]
+        run_id    = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
 
-        # 2) Unique run_id: UTC timestamp
-        run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-
-        # 3) Parallel run (no extra gcloud flags)
-        pp_flags = ["--properties", "spark.default.parallelism=8"]
         p_time, p_log = submit_and_wait(
-            gcloud_flags=pp_flags,
-            script_args=[in_prefix, run_id]
+            ["--properties", "spark.default.parallelism=8"],
+            [in_prefix, run_id]
         )
-
-        # 4) Sequential run (single partition)
-        p_flags = ["--properties", "spark.default.parallelism=1"]
         s_time, s_log = submit_and_wait(
-            gcloud_flags=p_flags,
-            script_args=[in_prefix, run_id]
+            ["--properties", "spark.default.parallelism=1"],
+            [in_prefix, run_id]
         )
 
-        # 5) Prepare chart metrics if both succeeded
         if p_time is not None and s_time is not None:
             metrics = {
                 "label":      label,
-                "parallel":   round(p_time, 1),
-                "sequential": round(s_time, 1)
+                "parallel":   round(p_time / 60, 2),
+                "sequential": round(s_time / 60, 2),
             }
 
-        # 6) Report any errors
         if p_time is None:
-            flash(f"Parallel job error:\n{p_log}", "danger")
+            flash(f"Parallel job error: {p_log}", "danger")
         if s_time is None:
-            flash(f"Sequential job error:\n{s_log}", "danger")
+            flash(f"Sequential job error: {s_log}", "danger")
 
     return render_template(
         "index.html",
@@ -113,5 +137,4 @@ def index():
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)), debug=True)

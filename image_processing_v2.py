@@ -61,6 +61,8 @@ if __name__ == "__main__":
 
     spark = SparkSession.builder.appName("CloudImageProcessing").getOrCreate()
     sc = spark.sparkContext
+    
+    print(f"defaultParallelism = {sc.defaultParallelism}")
 
     paths = list_images_in_prefix(gcs_prefix)
     if not paths:
