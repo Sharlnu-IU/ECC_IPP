@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Image Pipeline Comparison</title>
+  <link
+    href="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/4.6.1/css/bootstrap.min.css"
+    rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="p-5">
+  <div class="container">
+    <h1 class="mb-4">Parallel vs. Sequential Processing</h1>
+
+    <!-- Spark Web UI Link -->
+    <a href="{{ spark_ui_url }}" target="_blank" class="btn btn-info mb-4">
+      🔍 View Spark Web UI
+    </a>
+
+    <!-- Dataset Selection Form -->
+    <form method="post" class="form-inline mb-4">
+      <label class="mr-2" for="dataset">Dataset:</label>
+      <select name="dataset" id="dataset" class="form-control mr-2">
+        {% for d in datasets %}
+          <option>{{ d }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="btn btn-primary">Compare</button>
+    </form>
+
+    <!-- Flash Messages -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, text in messages %}
+          <div class="alert alert-{{ category }}">{{ text }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <!-- Chart Canvas -->
+    {% if metrics %}
+      <h4>Results for {{ metrics.label }}</h4>
+      <canvas id="comparisonChart" width="400" height="200"></canvas>
+      <script>
+        const ctx = document.getElementById('comparisonChart').getContext('2d');
+        new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: ['Parallel', 'Sequential'],
+            datasets: [{
+              label: 'Processing Time (s)',
+              data: [{{ metrics.parallel }}, {{ metrics.sequential }}],
+            }]
+          },
+          options: {
+            scales: {
+              y: { beginAtZero: true }
+            }
+          }
+        });
+      </script>
+    {% endif %}
+  </div>
+</body>
+</html>
