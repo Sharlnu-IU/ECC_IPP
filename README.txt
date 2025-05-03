@@ -40,4 +40,8 @@ gcloud dataproc clusters create new-cluster2 \
 6. Install the requirements:
 pip install -r requirements.txt
 
-7. Run Application: python app.py
+7. Run Application: python app.
+
+
+
+NOTE: CHANGE THE "Configuration" VARIABLES IN "app.py" TO YOUR ENVIRONMENT.
