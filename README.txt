@@ -1,3 +1,5 @@
+This project presents a cloud-native parallel image processing pipeline built on Google Cloud, PySpark and Flask.
+
 GCLOUD SDK:
 1. Download the setup and install: https://cloud.google.com/sdk/docs/install
 2. Login to your account: gcloud auth login
