@@ -46,4 +46,6 @@ pip install -r requirements.txt
 
 
 
+DATASET LINK: https://drive.google.com/file/d/1DaJzTjgKtqLGX2OCCFmOHQZAPX0efpdA/view?usp=sharing
+
 NOTE: CHANGE THE "Configuration" VARIABLES IN "app.py" TO YOUR ENVIRONMENT.
