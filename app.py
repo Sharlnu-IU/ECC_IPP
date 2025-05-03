@@ -108,13 +108,9 @@ def index():
         run_id    = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
 
         p_time, p_log = submit_and_wait(
-            ["--properties", "spark.default.parallelism=8"],
-            [in_prefix, run_id]
-        )
+            ["--properties", "spark.default.parallelism=8"],[in_prefix, run_id] )
         s_time, s_log = submit_and_wait(
-            ["--properties", "spark.default.parallelism=1"],
-            [in_prefix, run_id]
-        )
+            ["--properties", "spark.default.parallelism=1"],[in_prefix, run_id] )
 
         if p_time is not None and s_time is not None:
             metrics = {
